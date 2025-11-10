@@ -1,12 +1,37 @@
-FROM php:7.2.34-fpm-alpine3.12 as build
+FROM php:7.4-fpm-alpine AS build
 
-RUN apk update \
-    && apk add --no-cache libpng-dev  zeromq-dev git \
-    $PHPIZE_DEPS \
-    && docker-php-ext-install gd && docker-php-ext-install pdo_mysql && \
-    pecl install redis && docker-php-ext-enable redis && \
-    pecl install channel://pecl.php.net/zmq-1.1.3 && docker-php-ext-enable zmq && \
-    curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+ENV COMPOSER_ALLOW_SUPERUSER=1
+
+RUN set -eux; \
+    apk update && apk add --no-cache \
+      libpng-dev \
+      libjpeg-turbo-dev \
+      freetype-dev \
+      zeromq-dev \
+      git \
+      curl \
+      ca-certificates \
+      pkgconfig \
+    ; \
+    # install build deps required for pecl/phpize and native compilation
+    apk add --no-cache --virtual .build-deps \
+      $PHPIZE_DEPS \
+      build-base \
+      autoconf \
+      automake \
+      libtool \
+    ; \
+    # update PECL channel (silences protocol warnings) and install extensions
+    pecl channel-update pecl.php.net || true; \
+    pecl install redis && docker-php-ext-enable redis; \
+    pecl install zmq-1.1.3 && docker-php-ext-enable zmq; \
+    # configure and install PHP extensions (use all CPUs)
+    docker-php-ext-configure gd --with-jpeg --with-freetype || true; \
+    docker-php-ext-install -j$(getconf _NPROCESSORS_ONLN) gd pdo_mysql; \
+    # install composer
+    curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer; \
+    # cleanup build deps and apk cache to keep image small
+    apk del .build-deps && rm -rf /var/cache/apk/*
 
 COPY pathfinder /app
 WORKDIR /app
